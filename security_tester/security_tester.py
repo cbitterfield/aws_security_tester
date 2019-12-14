@@ -1,10 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 '''
-Python Template to create command line programs
-Created on Oct 12, 2019
+Program to get all public IPs and list them with appropriate tags
 
-@author: colin_bitterfield
+@author: colin bitterfield
+
+
+SERVICES with public IP Space
+AMAZON_CONNECT
+API_GATEWAY
+CLOUD9
+CLOUDFRONT
+CODEBUILD
+DYNAMODB
+EC2
+EC2_INSTANCE_CONNECT
+GLOBALACCELERATOR
+ROUTE53
+ROUTE53_HEALTHCHECKS
+S3
+WORKSPACES_GATEWAYS
+
+
 
 '''
 ### Library Imports  
@@ -372,7 +389,11 @@ def getCLIparams(cli_args):
 def main():
     CONFIG = getCLIparams(None)
     setup(CONFIG)
-    logger.debug('Test')
+    logger.info('AWS Security Tester')
+    
+    
+    
+    
     return 0
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ Program to get all public IPs and list them with appropriate tags
 
 
 SERVICES with public IP Space
+=================================
 AMAZON_CONNECT
 API_GATEWAY
 CLOUD9
@@ -16,10 +17,20 @@ DYNAMODB
 EC2
 EC2_INSTANCE_CONNECT
 GLOBALACCELERATOR
-ROUTE53
-ROUTE53_HEALTHCHECKS
+ROUTE53 -- Won't Check
+ROUTE53_HEALTHCHECKS -- Won't Check
 S3
 WORKSPACES_GATEWAYS
+
+    •    APIGateway
+    •    CloudFront
+    •    EC2 (and as a result: ECS, EKS, Beanstalk, Fargate, Batch, & NAT Instances)
+    •    ElasticSearch
+    •    ELB (Classic ELB)
+    •    ELBv2 (ALB/NLB)
+    •    Lightsail
+    •    RDS
+    •    Redshift
 
 
 
@@ -38,8 +49,8 @@ from datetime import datetime
 
 # Program Specific library imports
 import boto3
-
-
+from collections import defaultdict
+from columnar import columnar
 
 
 # Program Description Variables
@@ -72,7 +83,30 @@ VERBOSE=None
 LOG=None
 
 ####Global Variables # set defaults here.
-AWS_REGION_CHOICES=['us-east1','us-east2']
+AWS_REGION_CHOICES = [
+    'us-east-1',
+    'us-east-2',
+    'us-west-1',
+    'us-west-2',
+    'ap-east-1',
+    'ap-south-1',
+    'ap-northeast-1',
+    'ap-northeast-2',
+    'ap-northeast-3',
+    'ap-southeast-1',
+    'ap-southeast-2',
+    'ca-central-1',
+    'cn-north-1',
+    'cn-northwest-1',
+    'eu-central-1',
+    'eu-west-1',
+    'eu-west-2',
+    'eu-west-3',
+    'eu-north-1',
+    'me-south-1',
+    'sa-east-1'
+]
+AWS_DEFAULT_REGION='us-east-1'
 LOG_LEVEL_CHOICES=['DEBUG','INFO','NOTICE','CRITICAL','ERROR']
 LOGLEVEL='INFO' #Default loglevel
 OUTPUT_CHOICES=['txt','csv','xls']
@@ -84,6 +118,7 @@ LOG_LOCATION_CHOICES = ['console','syslog','file']
 LOG_DEFAULT = 'console'
 LOG_FACILITY = None
 LOG_FACILITY_DEFAULT='local0'
+AWS_CREDENTIALS = {}
 #### Setup Function for the application
 
 def setup(configuration):
@@ -94,6 +129,8 @@ def setup(configuration):
     global LOGFILE
     global LOG_FACILITY
     global logger
+    global AWS_CREDENTIALS
+    global AWS_DEFAULT_REGION
     
 
     
@@ -172,6 +209,18 @@ def setup(configuration):
         logger.info('{0} started  {1} Logging Enabled'.format(__prog_name__,getattr(configuration,'log')))
         logger.debug('CLI Parameters {0}'.format(configuration))    
         
+        if getattr(configuration,'aws_access_key') and getattr(configuration,'secret_access_key'):
+            AWS_CREDENTIALS = {
+                    'aws_access_key_id'     :  getattr(configuration,'aws_access_key'),
+                    'aws_secret_access_key' :  getattr(configuration,'secret_access_key'),
+  
+                }
+            if getattr(configuration,'aws_region'): AWS_DEFAULT_REGION=getattr(configuration,'aws_region')
+        else:
+            raise Exception ('You must pass AWS Keys, using the default profile is not enabled at this time')
+            sys.exit(1)
+            
+        
     return 
             
     ### Program Functions and Classes
@@ -179,26 +228,23 @@ def setup(configuration):
     # Apply the following to all when possible
     # 
     # def function(**kwargs)
-def sample(**kwargs):
+def getRegions(**kwargs):
     """ Protects a field while still giving some usable information.
 
         If the required arguements are not passed the function dies with a return failure and an exception.
 
         Settings:
         ---------
-        REQUIRED = list(['char','string','last'])
-            The required arguments
+        REQUIRED:
+            AWS_CREDENTIALS type dict
             
-        MAX_PARAMS = 3
-            To avoid any unknow issue
-            # Consider checking input for length
-            # If SQL used protect against injection
+        MAX_PARAMS = 2
+        
 
         Parameters:
         ----------
-        protect_field : char, stringToProtect,last
-            Take a [stringToProtect] of any length and replace all of the characters with a [char]
-                except for the [last] number of characters
+            AWS_REGION
+            AWS_CREDENTIALS type dict
 
         Raises:
         ------
@@ -208,19 +254,17 @@ def sample(**kwargs):
         Returns:
         --------
             SUCCESS FLAG
-            Obfuscated String
+            LIST of REGIONS that are in use for EC2s
             
-        Example: 
-        --------
-        SUCCESS, ARGS = product(char='*',string='MyLittleSecretSentance',last=4)
+        
              
     """
 
     logger.debug('starting with paramters {0}'.format(kwargs))
     
     
-    REQUIRED = list(['sound','light'])
-    MAX_PARAMS = 4
+    REQUIRED = list(['AWS_CREDENTIALS'])
+    MAX_PARAMS = 2
     SUCCESS = True
     
     # Check for requirement parameters
@@ -238,12 +282,28 @@ def sample(**kwargs):
         
     if DEBUG: print('Success Flag, {0}, arguments {1}'.format(SUCCESS,kwargs))
     ## Code to execute here
-    if SUCCESS:                    
+    if SUCCESS: 
+        REGION_LIST =[] 
+        DEFAULT_REGION = kwargs.get('AWS_REGION',AWS_DEFAULT_REGION)
         
-        return SUCCESS
+                          
+        session = boto3.Session(
+            **kwargs['AWS_CREDENTIALS'],
+            region_name = DEFAULT_REGION
+        )
+        ec2 = session.client('ec2')
+        response = ec2.describe_regions()
+        for region in response['Regions']:
+            REGION_LIST.append(region['RegionName'])
+    
+        
+    
+    
+        return SUCCESS,REGION_LIST
     
     else:
         logger.error('Error in parameters')
+        SUCCESS=False
         return SUCCESS
     
     
@@ -390,10 +450,125 @@ def main():
     CONFIG = getCLIparams(None)
     setup(CONFIG)
     logger.info('AWS Security Tester')
+    logger.debug(AWS_CREDENTIALS)
+    
+    # Get a set of regions that can support EC2s
+    STATUS, AWS_REGIONS_IN_USE = getRegions(AWS_REGIONS=AWS_REGION_CHOICES, AWS_CREDENTIALS=AWS_CREDENTIALS)
+    if STATUS:
+        logger.info('AWS_REGIONS: {}'.format(AWS_REGIONS_IN_USE))
+    else:
+        raise Exception('No Available Regions')
+        sys.exit(1)
+    
+    for AWS_REGION in AWS_REGIONS_IN_USE:
+        session = boto3.Session(
+            **AWS_CREDENTIALS,
+            region_name = AWS_REGION
+        )
+    
+    ec2 = session.resource('ec2')
+    # Get information for all running instances
+    running_instances = ec2.instances.filter(Filters=[
+        {
+        'Name': 'instance-state-name',
+        'Values': ['running']
+        }
+    ])
+    if len(list(running_instances)) > 0:
+        print('Getting EC2 information for region {}'.format(AWS_REGION))
+    for instance in running_instances:
+        for tag in instance.tags:
+            if 'Name'in tag['Key']:
+                name = tag['Value']
+        # Output EC2s and their information
+        print("======================================================")
+        print('Instance Name       : {}'.format(name))
+        print('Instance Public IP  : {}'.format(instance.public_ip_address))
+        print('Instance Public DNS : {}'.format(instance.public_dns_name))
+        print('Instance Type       : {}'.format(instance.instance_type))
+        print('Instance State      : {}'.format(instance.state['Name']))
+        print('Instance Launch Time: {}'.format(instance.launch_time))
+        print("======================================================")
+        
+
+        # Output the security group table for each instance
+        sg_header = ['FromPort','ToPort','Protocol','IPv4','IPv6']
+        sg_data = []
+        ipv4Cidr = []
+        ipv6Cidr = []
+        
+        for sg in instance.security_groups:
+            security_group = ec2.SecurityGroup(sg['GroupId'])
+            print('Security Group: {sg} Name {sg_name}'.format(sg=sg['GroupId'],sg_name=sg['GroupName']))
+            for permission in security_group.ip_permissions:
+                data = []
+                data = [ permission.get('FromPort',''), permission.get('ToPort',''),permission.get('IpProtocol','')]
+                for ip_range in permission.get('IpRanges',''):
+                    ipv4Cidr = []
+                    ipv4Cidr.append( ip_range.get('CidrIp','') )
+                data.append(ipv4Cidr)
+                print()
+                for ip_range in permission.get('Ipv6Ranges',''):
+                    ipv6Cidr = []
+                    ipv6Cidr.append(ip_range.get('CidrIpv6',''))
+                data.append(ipv6Cidr)   
+            sg_data.append(data)   
+                            
+            table = columnar(sg_data, sg_header, no_borders=True)
+            print(table)
+            print("======================================================")
     
     
     
+    ######################################################################################
+    # Get Information about ELB
     
+    for AWS_REGION in AWS_REGIONS_IN_USE:
+        session = boto3.Session(
+                    **AWS_CREDENTIALS,
+                    region_name=AWS_REGION
+                )
+        elb = session.client('elb')
+        ec2 = session.resource('ec2')
+        response = elb.describe_load_balancers()
+        if response['LoadBalancerDescriptions']:
+            
+            for load_balancer in response['LoadBalancerDescriptions']:
+                print("======================================================")
+                print('Load Balancer Name : {}'.format(load_balancer['LoadBalancerName']))
+                print('Load Balancer DNS : {}'.format(load_balancer['DNSName']))
+               
+                
+                
+                # Output the security group table for each instance
+                sg_header = ['FromPort','ToPort','Protocol','IPv4','IPv6']
+                sg_data = []
+                ipv4Cidr = []
+                ipv6Cidr = []
+    
+                for sg in load_balancer['SecurityGroups']:
+                    security_group = ec2.SecurityGroup(sg)
+                    print('ELB Security GrpID  : {}'.format(security_group.group_id))
+                    print('ELB Security GrpName: {}'.format(security_group.group_name))
+                    print('ELB Security GrpDesc: {}'.format(security_group.description))
+                    for permission in security_group.ip_permissions:
+                        data = []
+                        data = [ permission.get('FromPort',''), permission.get('ToPort',''),permission.get('IpProtocol','')]
+                        for ip_range in permission.get('IpRanges',''):
+                            ipv4Cidr = []
+                            ipv4Cidr.append( ip_range.get('CidrIp','') )
+                        data.append(ipv4Cidr)
+    
+                        for ip_range in permission.get('Ipv6Ranges',''):
+                            ipv6Cidr = []
+                            ipv6Cidr.append(ip_range.get('CidrIpv6',''))
+                        data.append(ipv6Cidr)   
+                        sg_data.append(data)   
+                    table = columnar(sg_data, sg_header, no_borders=True)
+                    print(table)
+                    print("======================================================")
+    
+    print('End of Program')
     return 0
 
 if __name__ == "__main__":

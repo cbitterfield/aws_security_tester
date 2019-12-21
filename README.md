@@ -4,43 +4,43 @@ A script to provide an analysis of public ip space with open ports/protocols
 
 ## Services tested
 
-by Specification: EC2, ELB and RDS
+**by Specification:**
+- EC2
+- ELB
+- ELBv2
+- RDS
 
-by Research: 
+**by Research: **
+- CloudFront counts
+- CodeBuild counts
+- DynamoDB counts
+- S3 counts
+- ElasticSearch counts
 
-	SERVICES with public IP Space
-	=================================
-	-AMAZON_CONNECT - Not
-	-API_GATEWAY
-	-CLOUD9
-	-CLOUDFRONT
-	-CODEBUILD
-	-DYNAMODB
-	-EC2
-	-EC2_INSTANCE_CONNECT - Not checking
-	-GLOBALACCELERATOR - Not checking
-	-ROUTE53 -- Won't Check
-	-ROUTE53_HEALTHCHECKS -- Won't Check
-	-S3 
-	-WORKSPACES_GATEWAYS
-	-ELB (Classic ELB)
-	-ELBv2 (ALB/NLB)
-	-Lightsail
-	-Redshift
-	
-	### Services Checked:
-	================================================================================
-	-Service Counts
-	-EC2 counts 4
-	-ELB counts 1
-	-ELBv2 counts 0
-	-RDS counts 1
-	-CloudFront counts 0
-	-CodeBuild counts 0
-	-DynamoDB counts 0
-	-S3 counts 0
-	-ElasticSearch counts 0
-	================================================================================
+------------
+
+
+## Services with public IP Space
+=================================
+<span style="color:red">- AMAZON_CONNECT - Not Checked</span>
+- API_GATEWAY
+<span style="color:red">- CLOUD9 - Not Checked</span>
+- CLOUDFRONT
+- CODEBUILD
+- DYNAMODB
+ -EC2
+<span style="color:red">- EC2_INSTANCE_CONNECT - Not checking</span>
+<span style="color:red">- GLOBALACCELERATOR - Not checking</span>
+<span style="color:red">- ROUTE53 -- Won't Check</span>
+<span style="color:red">- ROUTE53_HEALTHCHECKS -- Not Checked</span>
+- S3 
+<span style="color:red">-WORKSPACES_GATEWAYS -- Not Checked</span>
+- ELB (Classic ELB)
+- ELBv2 (ALB/NLB)
+- Lightsail
+- Redshift
+
+
 
 ## Instructions for Use
 
@@ -56,20 +56,21 @@ Passing (profile works)
 
 Limitations were based on my access to an AWS development environment. 
 
+## Example usages
 
 
--profile default -log file
+### Use AWS Keys and w or w/o token
+`./security_tester  --access-key AWS_ACCESS_KEY --secret-access-key SECRET_ACCESS_KEY [optional] --aws-session-token AWS_TOKEN -log file`
 
+### Use AWS Profile
+`./security_tester -profile AWS_PROFILE -log file`
 
-
-
-
-
-
-
+### Use AWS default profile
+`./security_tester -log file`
 
 
 ## Usage Help
+```
 usage: security_tester.py [-h] [--version] [-o {txt,csv,xls}] [-v] [-dr]
                           [-ll {DEBUG,INFO,NOTICE,CRITICAL,ERROR}] [-l LINES]
                           [-f OUT_FILE] [-d] [-log {none,console,syslog,file}]
@@ -112,5 +113,112 @@ optional arguments:
                         AWS access key
   -token AWS_TOKEN, --aws-session-token AWS_TOKEN
                         AWS access session token
+```
+## Comments about the program
 
-Comments about the program
+<span style="color:blue">
+The edge cases and work left to do is related to testing and verifying all places where a public IP address might be used. I looked at a few methods to determine this with Security Groups and some other methods. 
+
+The program provides two sets of data. One by the service and a summary and analysis at the end.
+
+### Examples
+
+EC2 with Security Group:
+
+```shell
+================================================================================
+Instance Name       : Lutra
+Instance Private IP : 172.31.39.42
+Instance Private DNS: ip-172-31-39-42.us-west-2.compute.internal
+Instance Public IP  : 34.220.77.158
+Instance Public DNS : ec2-34-220-77-158.us-west-2.compute.amazonaws.com
+Instance Type       : t2.nano
+Instance State      : running
+Instance Launch Time: 2018-05-31 16:32:38+00:00
+Instance Region     : us-west-2
+================================================================================
+Security Group ID: sg-068df045157b84a91 /  name: Pyrrhula
+Group Description: Pyrrhula
+================================================================================
+Ingress Rules
+|-----------|-----------|-----------|---------|---------|---------|-----------|
+|Security Gr|ports      |IPv4 CIDR  |IPv4 Type|IPv6 CIDR|IPv6 Type|Security An|
+|p          |           |           |         |         |         |alysis     |
+|=============================================================================|
+|sg-068df045|80:80:tcp  |172.32.4.50|PUBLIC   |[]       |-        |Open to pub|
+|157b84a91  |           |/32        |         |         |         |lic space :|
+|           |           |           |         |         |         | -:-       |
+|-----------|-----------|-----------|---------|---------|---------|-----------|
+|sg-068df045|5432:5432:t|172.32.4.50|PUBLIC   |[]       |-        |Open to pub|
+|157b84a91  |cp         |/32        |         |         |         |lic space :|
+|           |           |           |         |         |         | -:-       |
+|-----------|-----------|-----------|---------|---------|---------|-----------|
+|sg-068df045|22:22:tcp  |172.32.4.50|PUBLIC   |[]       |-        |Open to pub|
+|157b84a91  |           |/32        |         |         |         |lic space :|
+|           |           |           |         |         |         | -:-       |
+> ================================================================================
+Instance Name       : Lutra
+Instance Private IP : 172.31.39.42
+Instance Private DNS: ip-172-31-39-42.us-west-2.compute.internal
+Instance Public IP  : 34.220.77.158
+Instance Public DNS : ec2-34-220-77-158.us-west-2.compute.amazonaws.com
+Instance Type       : t2.nano
+Instance State      : running
+Instance Launch Time: 2018-05-31 16:32:38+00:00
+Instance Region     : us-west-2
+================================================================================
+Security Group ID: sg-068df045157b84a91 /  name: Pyrrhula
+Group Description: Pyrrhula
+================================================================================
+Ingress Rules
+|-----------|-----------|-----------|---------|---------|---------|-----------|
+|Security Gr|ports      |IPv4 CIDR  |IPv4 Type|IPv6 CIDR|IPv6 Type|Security An|
+|p          |           |           |         |         |         |alysis     |
+|=============================================================================|
+|sg-068df045|80:80:tcp  |172.32.4.50|PUBLIC   |[]       |-        |Open to pub|
+|157b84a91  |           |/32        |         |         |         |lic space :|
+|           |           |           |         |         |         | -:-       |
+|-----------|-----------|-----------|---------|---------|---------|-----------|
+|sg-068df045|5432:5432:t|172.32.4.50|PUBLIC   |[]       |-        |Open to pub|
+|157b84a91  |cp         |/32        |         |         |         |lic space :|
+|           |           |           |         |         |         | -:-       |
+|-----------|-----------|-----------|---------|---------|---------|-----------|
+|sg-068df045|22:22:tcp  |172.32.4.50|PUBLIC   |[]       |-        |Open to pub|
+|157b84a91  |           |/32        |         |         |         |lic space :|
+|           |           |           |         |         |         | -:-       |
+|-----------|-----------|-----------|---------|---------|---------|-----------||-----------|-----------|-----------|---------|---------|---------|-----------|
+```
+
+### Example 2
+
+```
+IP Summary of Report
+|-------|-------|-------|-------|-------|-------|-------|-------|-------|
+|Service|IP Addr|DNS Nam|Service|Securit|Ports O|IPv4 CI|IPv6 CI|Securit|
+|       |ess    |e      | Port  |y Group|pen    |DR     |DR     |y Check|
+|=======================================================================|
+|ec2    |34.220.|ec2-34-|*      |sg-068d|80:80:t|172.32.|[]     |Open to|
+|       |77.158 |220-77-|       |f045157|cp     |4.50/32|       | public|
+|       |       |158.us-|       |b84a91 |       |       |       | space |
+|       |       |west-2.|       |       |       |       |       |: -:-  |
+|       |       |compute|       |       |       |       |       |       |
+|       |       |.amazon|       |       |       |       |       |       |
+|-------|-------|-------|-------|-------|-------|-------|-------|-------|
+|ec2    |34.220.|ec2-34-|*      |sg-068d|5432:54|172.32.|[]     |Open to|
+|       |77.158 |220-77-|       |f045157|32:tcp |4.50/32|       | public|
+|       |       |158.us-|       |b84a91 |       |       |       | space |
+|       |       |west-2.|       |       |       |       |       |: -:-  |
+|       |       |compute|       |       |       |       |       |       |
+|       |       |.amazon|       |       |       |       |       |       |
+|-------|-------|-------|-------|-------|-------|-------|-------|-------|
+|ec2    |34.220.|ec2-34-|*      |sg-068d|22:22:t|172.32.|[]     |Open to|
+|       |77.158 |220-77-|       |f045157|cp     |4.50/32|       | public|
+|       |       |158.us-|       |b84a91 |       |       |       | space |
+|       |       |west-2.|       |       |       |       |       |: -:-  |
+|       |       |compute|       |       |       |       |       |       |
+|       |       |.amazon|       |       |       |       |       |       |
+|-------|-------|-------|-------|-------|-------|-------|-------|-------|
+```
+
+
+</span>

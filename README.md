@@ -11,38 +11,38 @@ A script to provide an analysis of public ip space with open ports/protocols
 - RDS
 
 **by Research: **
-- CloudFront counts
-- CodeBuild counts
-- DynamoDB counts
-- S3 counts
-- ElasticSearch counts
+- CloudFront / incomplete
+- CodeBuild  / incomplete
+- DynamoDB  / incomplete
+- S3  / incomplete
+- ElasticSearch  / incomplete
 
 ------------
 
 
 ## Services with public IP Space
 =================================
-<span style="color:red">- AMAZON_CONNECT - Not Checked</span>
 - API_GATEWAY
-<span style="color:red">- CLOUD9 - Not Checked</span>
 - CLOUDFRONT
 - CODEBUILD
 - DYNAMODB
- -EC2
-<span style="color:red">- EC2_INSTANCE_CONNECT - Not checking</span>
-
-<span style="color:red">- GLOBALACCELERATOR - Not checking</span>
-
-<span style="color:red">- ROUTE53 -- Won't Check</span>
-
-<span style="color:red">- ROUTE53_HEALTHCHECKS -- Not Checked</span>
-
-- S3 
-<span style="color:red">-WORKSPACES_GATEWAYS -- Not Checked</span>
+- EC2
+- S3
 - ELB (Classic ELB)
 - ELBv2 (ALB/NLB)
 - Lightsail
 - Redshift
+- EC2_INSTANCE_CONNECT
+
+<span style="color:red">
+#### Not Checked
+- WORKSPACES_GATEWAYS
+- ROUTE53_HEALTHCHECKS 
+- ROUTE53
+- GLOBALACCELERATOR
+- CLOUD9
+- AMAZON_CONNECT
+</span>
 
 
 

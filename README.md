@@ -34,7 +34,7 @@ A script to provide an analysis of public ip space with open ports/protocols
 - Redshift
 - EC2_INSTANCE_CONNECT
 
-<span style="color:red">
+
 #### Not Checked
 - WORKSPACES_GATEWAYS
 - ROUTE53_HEALTHCHECKS 
@@ -42,7 +42,7 @@ A script to provide an analysis of public ip space with open ports/protocols
 - GLOBALACCELERATOR
 - CLOUD9
 - AMAZON_CONNECT
-</span>
+
 
 
 

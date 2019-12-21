@@ -121,15 +121,17 @@ optional arguments:
 ## Comments about the program
 
 <span style="color:blue">
-The edge cases and work left to do is related to testing and verifying all places where a public IP address might be used. I looked at a few methods to determine this with Security Groups and some other methods. 
+The edge cases and work left to do is related to testing and verifying all places where a public IP address might be used. 
+I looked at a few methods to determine this with Security Groups and some other methods. 
 
-The program provides two sets of data. One by the service and a summary and analysis at the end. Ideally, I would add comments and tags from the VPCs. 
+The program provides two sets of data. One by the service and a summary and analysis at the end. 
+Ideally, I would add comments and tags from the VPCs. 
 
 There is a need for using some Cloud Vendors to provide an automated IP address report 
 and tags. Given the time constraints and lack of development environment, these options 
-are not included
+are not included. 
 
-
+</span>
 
 ### Examples
 
@@ -232,4 +234,3 @@ IP Summary of Report
 ```
 
 
-</span>

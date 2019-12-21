@@ -15,11 +15,11 @@ CLOUDFRONT
 CODEBUILD
 DYNAMODB
 EC2
-EC2_INSTANCE_CONNECT
-GLOBALACCELERATOR
+EC2_INSTANCE_CONNECT - Not checking
+GLOBALACCELERATOR - Not checking
 ROUTE53 -- Won't Check
 ROUTE53_HEALTHCHECKS -- Won't Check
-S3
+S3 
 WORKSPACES_GATEWAYS
 
     •    APIGateway
@@ -51,6 +51,9 @@ from datetime import datetime
 import boto3
 from collections import defaultdict
 from columnar import columnar
+import shutil
+import socket
+from IPy import IP
 
 
 # Program Description Variables
@@ -119,6 +122,15 @@ LOG_DEFAULT = 'console'
 LOG_FACILITY = None
 LOG_FACILITY_DEFAULT='local0'
 AWS_CREDENTIALS = {}
+TTY_columns,TTY_lines = shutil.get_terminal_size((80, 20))
+HR_LINE = "=" * TTY_columns
+
+# This will be a list of DICT (Service,IP address, DNS Name, Ports, Security Group ID, Warning Message if world accessible
+IP_DATA = list()
+
+
+
+
 #### Setup Function for the application
 
 def setup(configuration):
@@ -134,7 +146,7 @@ def setup(configuration):
     
 
     
-    print('Conf {}'.format(configuration))
+    
     
     if DEBUG == None:
         DEBUG=getattr(configuration,'debug')
@@ -209,17 +221,30 @@ def setup(configuration):
         logger.info('{0} started  {1} Logging Enabled'.format(__prog_name__,getattr(configuration,'log')))
         logger.debug('CLI Parameters {0}'.format(configuration))    
         
-        if getattr(configuration,'aws_access_key') and getattr(configuration,'secret_access_key'):
-            AWS_CREDENTIALS = {
-                    'aws_access_key_id'     :  getattr(configuration,'aws_access_key'),
-                    'aws_secret_access_key' :  getattr(configuration,'secret_access_key'),
-  
-                }
-            if getattr(configuration,'aws_region'): AWS_DEFAULT_REGION=getattr(configuration,'aws_region')
-        else:
-            raise Exception ('You must pass AWS Keys, using the default profile is not enabled at this time')
-            sys.exit(1)
-            
+        # Setup the AWS Credential Logic
+        
+        # Check for Profile, then keys, then env variables. If nothing use the default profile 
+        # Boto3 checks environment variables for missing credential information
+        # We have to set credentials if we receive them via CLI
+        #
+        
+        aws_access_key     = configuration.aws_access_key
+        aws_secret_key     = configuration.secret_access_key
+        aws_profile        = configuration.aws_profile
+        aws_token          = configuration.aws_token
+        
+        
+        
+        
+        AWS_CREDENTIALS = {
+            'aws_access_key_id'     : aws_access_key,
+            'aws_secret_access_key' : aws_secret_key,
+            'profile_name'          : aws_profile,
+            'aws_session_token'     : aws_token
+            }
+ 
+         
+        logger.debug(AWS_CREDENTIALS)
         
     return 
             
@@ -228,6 +253,230 @@ def setup(configuration):
     # Apply the following to all when possible
     # 
     # def function(**kwargs)
+def ip_check(ip_address):
+    '''Determine if the IP is a known type
+    
+    PARAMS:
+    -------
+        ip_address
+        
+    RETURN
+        ip type
+    
+    '''
+    
+    ip = IP(ip_address)
+    result = ip.iptype()
+    if 'public' in result.lower():
+        isPublic = True 
+    else:
+        isPublic = False 
+    
+    return isPublic
+def sg_check(ip_address):
+    '''Determine if the IP is a known type
+    
+    PARAMS:
+    -------
+        ip_address
+        
+    RETURN
+        ip type
+    
+    '''
+    messageSecurity="-"
+    
+    ip = IP(ip_address)
+    isPublic=False
+    
+    
+    
+    result = ip.iptype()
+    
+    if ip_address == "0.0.0.0/0" or ip_address == "::/0": 
+        messageSecurity = "CRITICAL / Open to all IPs"
+        result = "PUBLIC"
+        isPublic=True
+    else:
+        count=0
+        for x in ip:
+            count += 1
+            
+        if 'public' in result.lower():
+            isPublic=True
+        
+
+        if count > 32: 
+            messageSecurity =  "CRITICAL / Open to {x} ip addresses or more".format(x=count)
+        elif count > 16:
+            messageSecurity = messageSecurity + "Warning / Open to {x} ip addresses".format(x=count)
+        elif count > 1:
+            messageSecurity = messageSecurity + "Open to {x} ip addresses".format(x=count)
+        else:
+            pass
+        
+    
+    
+    return isPublic, messageSecurity, result
+def process_sg(sg_list,service_info,ec2):
+    """
+    Process a security group list.
+    Produce a table for display and return a list for a summary
+
+    PARAMS:
+    --------
+        sg_list = a service group list
+        service_info = Service Info for the table and the return list.
+
+    RETURN:
+        SUCCESS or FAILURE
+        Update Global Variables
+
+    GLOBAL 
+    -------
+        IP_DATA
+
+    """
+    # Enumerate over the list of security group IDs
+    # We will use sg_list so that this block of code is reusable
+    # Create a table for all of the permissions for this object
+    # This code will have two lists for input. 
+    # server_info (information about the service object to be prepended to each line)
+    # sg_list (a list of security group IDs to interate over)
+    
+    #GLOBAL Declarations
+    global IP_DATA
+    
+    #Local Declarations
+    ipv4_type = ""
+    ipv6_type = ""
+    ipV6_sg_public = False 
+    ipV4_sg_public = False 
+    securityMessage = ""
+    V4_securityMessage = ""
+    V6_securityMessage = ""
+    service_isPublic = ip_check(service_info[1]) 
+    ip_temp = list()
+    ipv4Cidr = list()
+    ipv6Cidr = list()
+    
+    
+    
+    sg_header = ['Security Grp','ports','IPv4 CIDR', 'IPv4 Type' , 'IPv6 CIDR', 'IPv6 Type', 'Security Analysis']
+
+    for sg in sg_list:
+        # List for summary report for public IPs
+        summary_info = list()
+        # List for security report for all lines
+        ingress_list = list()
+        # List for columnar reporting
+        sg_data = list()
+
+        security_group = ec2.SecurityGroup(sg)
+
+        # Assign security group header information to local variables
+        grp_id = security_group.group_id
+        grp_name = security_group.group_name
+        grp_desc = security_group.description
+
+        # Output the security group report information header
+        print('Security Group ID: {gid} /  name: {gname}'.format(gid=grp_id, gname=grp_name))
+        print('Group Description: {desc}'.format(desc=grp_desc))
+        print(HR_LINE)
+        print("Ingress Rules")
+
+        #Build a table of information for the group and summary reports
+        for ingress_rule in security_group.ip_permissions:
+            ipv4_type = "-"
+            ipv6_type = "-"
+            ipV6_public = False 
+            ipV4_public = False 
+            securityMessage = "-"
+            V4_securityMessage = "-"
+            V6_securityMessage = "-"
+            # Start this section by clearing line variables
+            ingress_list=list()
+            summary_info=list()
+            # Group Report & Group Report
+            ingress_list.append(grp_id)
+            summary_info.append(grp_id)
+
+            # Create a consolidated entry for ports
+            FromPort = str(ingress_rule.get('FromPort',''))
+            ToPort   = str(ingress_rule.get('ToPort',''))
+            protocol = "both" if ingress_rule.get('IpProtocol','') == '-1' else ingress_rule.get('IpProtocol','')
+            ports = ":".join([FromPort,ToPort,protocol])
+            # Add to reports
+            ingress_list.append(ports)
+            summary_info.append(ports)
+
+            #Create a consolidated entry for IPv4 CIDRs
+            for ip_range in ingress_rule.get('IpRanges',''):
+                ipv4Cidr = list()
+                ipv4Cidr.append(ip_range.get('CidrIp',''))
+                ipv4Cidr = ','.join(ipv4Cidr)
+                ipV4_public, V4_securityMessage ,ipv4_type = sg_check(ipv4Cidr)
+
+            ipv4Cidr = '-' if ipv4Cidr == None else ipv4Cidr
+            # Add to reports 
+            ingress_list.append(ipv4Cidr)
+            ingress_list.append(ipv4_type)
+            summary_info.append(ipv4Cidr)
+
+
+
+            # Create an entry for IPv6
+            for ip_range in ingress_rule.get('Ipv6Ranges',''):
+                ipv6Cidr = list()
+                ipv6Cidr.append( ip_range.get('CidrIpv6','') )
+                ipv6Cidr = ','.join(ipv6Cidr)
+                ipV6_public, V6_securityMessage,ipv6_type = sg_check(ipv6Cidr)
+            ipv6Cidr = '-' if ipv6Cidr == None else ipv6Cidr
+
+            # Add to reports
+            ingress_list.append(ipv6Cidr)
+            ingress_list.append(ipv6_type)
+            summary_info.append(ipv6Cidr)
+
+            # Add security warning messages to each line if necessary
+            # elif
+            # If acessible by more than one host issue a warning
+            if service_isPublic and (ipV4_public or ipV6_public):
+                securityMessage = "Open to public space : " +  V4_securityMessage + ":" + V6_securityMessage
+            else:
+                securityMessage = V4_securityMessage + ":" + V6_securityMessage
+            
+            ingress_list.append(securityMessage)
+            summary_info.append(securityMessage)
+            
+
+            # Use Temp space to extend and add lines to each report
+            ip_temp.extend(service_info)
+            ip_temp.extend(summary_info)
+            # Only add the line for the summary report if it is public IP space
+            if service_isPublic and (ipV4_public or ipV6_public):
+                IP_DATA.append(ip_temp)
+            else:
+                ingress_list.append("-")
+                summary_info.append("-")
+            ip_temp = list()
+            ip_temp.extend(ingress_list)
+            sg_data.append(ip_temp)
+
+            #Clear Temp Space
+            ip_temp = list()
+
+
+
+        for i in range(len(sg_data)):
+            if DEBUG: print('{i} {sg_data}'.format(i=i,sg_data=sg_data[i]))
+        table = columnar(sg_data, sg_header, no_borders=False)
+        print(table)
+    
+    
+    
+    
+    return True
 def getRegions(**kwargs):
     """ Protects a field while still giving some usable information.
 
@@ -413,7 +662,7 @@ def getCLIparams(cli_args):
                         default=LOG_FACILITY_DEFAULT
                         )
         
-    parser.add_argument('-p', '--profile', type=str, help='AWS Profile to use',
+    parser.add_argument('-profile', '--profile', type=str, help='AWS Profile to use',
                         action='store',
                         required=False,
                         dest='aws_profile',
@@ -450,78 +699,98 @@ def main():
     CONFIG = getCLIparams(None)
     setup(CONFIG)
     logger.info('AWS Security Tester')
-    logger.debug(AWS_CREDENTIALS)
+    logger.debug('AWS Credentials {}'.format(AWS_CREDENTIALS))
     
     # Get a set of regions that can support EC2s
+    print('Evaluating regions to see which ones we can access')
     STATUS, AWS_REGIONS_IN_USE = getRegions(AWS_REGIONS=AWS_REGION_CHOICES, AWS_CREDENTIALS=AWS_CREDENTIALS)
     if STATUS:
         logger.info('AWS_REGIONS: {}'.format(AWS_REGIONS_IN_USE))
     else:
         raise Exception('No Available Regions')
         sys.exit(1)
+        
+    print('Regions we can access for testing')
+    print('Region List: {}'.format(AWS_REGIONS_IN_USE))
+    
+    
+    print('Checking All Supported Regions for EC2 Instances')
+
+    # Setup Variables for this section
+    count_ec2 = 0
+    
     
     for AWS_REGION in AWS_REGIONS_IN_USE:
+    
         session = boto3.Session(
             **AWS_CREDENTIALS,
             region_name = AWS_REGION
         )
-    
-    ec2 = session.resource('ec2')
-    # Get information for all running instances
-    running_instances = ec2.instances.filter(Filters=[
-        {
-        'Name': 'instance-state-name',
-        'Values': ['running']
-        }
-    ])
-    if len(list(running_instances)) > 0:
-        print('Getting EC2 information for region {}'.format(AWS_REGION))
-    for instance in running_instances:
-        for tag in instance.tags:
-            if 'Name'in tag['Key']:
-                name = tag['Value']
-        # Output EC2s and their information
-        print("======================================================")
-        print('Instance Name       : {}'.format(name))
-        print('Instance Public IP  : {}'.format(instance.public_ip_address))
-        print('Instance Public DNS : {}'.format(instance.public_dns_name))
-        print('Instance Type       : {}'.format(instance.instance_type))
-        print('Instance State      : {}'.format(instance.state['Name']))
-        print('Instance Launch Time: {}'.format(instance.launch_time))
-        print("======================================================")
         
-
-        # Output the security group table for each instance
-        sg_header = ['FromPort','ToPort','Protocol','IPv4','IPv6']
-        sg_data = []
-        ipv4Cidr = []
-        ipv6Cidr = []
         
-        for sg in instance.security_groups:
-            security_group = ec2.SecurityGroup(sg['GroupId'])
-            print('Security Group: {sg} Name {sg_name}'.format(sg=sg['GroupId'],sg_name=sg['GroupName']))
-            for permission in security_group.ip_permissions:
-                data = []
-                data = [ permission.get('FromPort',''), permission.get('ToPort',''),permission.get('IpProtocol','')]
-                for ip_range in permission.get('IpRanges',''):
-                    ipv4Cidr = []
-                    ipv4Cidr.append( ip_range.get('CidrIp','') )
-                data.append(ipv4Cidr)
-                print()
-                for ip_range in permission.get('Ipv6Ranges',''):
-                    ipv6Cidr = []
-                    ipv6Cidr.append(ip_range.get('CidrIpv6',''))
-                data.append(ipv6Cidr)   
-            sg_data.append(data)   
-                            
-            table = columnar(sg_data, sg_header, no_borders=True)
-            print(table)
-            print("======================================================")
+        ec2 = session.resource('ec2')
+        # Get information for all running instances
+        running_instances = ec2.instances.filter(Filters=[
+            {
+            'Name': 'instance-state-name',
+            'Values': ['running']
+            }
+        ])
+        if len(list(running_instances)) > 0:
+            print('Getting EC2 information for region {}'.format(AWS_REGION))
+            for instance in running_instances:
+                count_ec2 += 1
+                for tag in instance.tags:
+                    if 'Name'in tag['Key']:
+                        name = tag['Value']
+                # Output EC2s and their information
+                print(HR_LINE)
+                print('Instance Name       : {}'.format(name))
+                print('Instance Private IP : {}'.format(instance.private_ip_address))
+                print('Instance Private DNS: {}'.format(instance.private_dns_name))
+                print('Instance Public IP  : {}'.format(instance.public_ip_address))
+                print('Instance Public DNS : {}'.format(instance.public_dns_name))
+                print('Instance Type       : {}'.format(instance.instance_type))
+                print('Instance State      : {}'.format(instance.state['Name']))
+                print('Instance Launch Time: {}'.format(instance.launch_time))
+                print('Instance Region     : {}'.format(AWS_REGION))
+                print(HR_LINE)
+        
+                # Set Summary line for instance
+                if instance.public_ip_address:
+                    service_info = ['ec2',instance.public_ip_address, instance.public_dns_name,"*" ]
+                else:
+                    service_info = ['ec2',instance.private_ip_address, instance.private_dns_name,"*" ]
+        
+                # Output the security group table for each instance
+                # Clear Variables between EC2 Instances
+                sg_data = list()
+                ipv4Cidr = list()
+                ipv6Cidr = list()
+                
+                #
+        
+                # Create a list of security groups for the standard function to process
+                sg_list = list()
+                for security_grp in instance.security_groups:
+                    sg_list.append(security_grp['GroupId'])
+                
+                
+                ## Call Process SG here:
+                status_message = process_sg(sg_list,service_info,ec2)
+                logger.debug('SG Processing return {}'.format(status_message))
+        
+                print(HR_LINE)
+        
+            # Send Count message             
+            if count_ec2 == 0:
+                print('No EC2 Instances found')
+            else:
+                print('Numnber of EC2 Instances Found {}'.format(count_ec2))
     
-    
-    
-    ######################################################################################
-    # Get Information about ELB
+    print(HR_LINE) 
+    print('Checking ELB LoadBalancers')
+    count_elb = 0
     
     for AWS_REGION in AWS_REGIONS_IN_USE:
         session = boto3.Session(
@@ -531,43 +800,355 @@ def main():
         elb = session.client('elb')
         ec2 = session.resource('ec2')
         response = elb.describe_load_balancers()
+        
         if response['LoadBalancerDescriptions']:
-            
+            count_elb += 1
             for load_balancer in response['LoadBalancerDescriptions']:
-                print("======================================================")
+                print(HR_LINE)
+                logger.debug(load_balancer)
+                lb_ip_address = socket.gethostbyname(load_balancer['DNSName'])
+                print('Load Balancer Name : {}'.format(load_balancer['LoadBalancerName']))
+                print('Load Balancer DNS  : {}'.format(load_balancer['DNSName']))  
+                print('Load Balancer IP   : {}'.format(lb_ip_address)  )
+                service_info = ['elb',lb_ip_address, load_balancer['DNSName'],"*" ]
+                
+                
+         
+            # Create a list of security groups for the standard function to process
+                sg_list = list()
+                for sg in load_balancer['SecurityGroups']:
+                    sg_list.append(sg)
+                    
+                status_message = process_sg(sg_list,service_info,ec2)
+                logger.debug('SG Processing return {}'.format(status_message))
+    
+    if count_elb == 0:
+        print('No ELB Instances found')
+    else:
+        print('Numnber of ELB Instances Found {}'.format(count_elb))            
+                    
+    print(HR_LINE)      
+                    
+        
+    print(HR_LINE)                
+    print('Checking ELBv2 LoadBalancers')
+    
+    count_elbv2 = 0
+    
+    for AWS_REGION in AWS_REGIONS_IN_USE:
+        session = boto3.Session(
+                    **AWS_CREDENTIALS,
+                    region_name=AWS_REGION
+                )
+        elb2 = session.client('elbv2')
+        ec2 = session.resource('ec2')
+        response = elb2.describe_load_balancers()
+        
+        if response['LoadBalancers']:
+            
+            for load_balancer in response['LoadBalancers']:
+                count_elbv2 += 1
+                print(HR_LINE)
                 print('Load Balancer Name : {}'.format(load_balancer['LoadBalancerName']))
                 print('Load Balancer DNS : {}'.format(load_balancer['DNSName']))
-               
-                
-                
-                # Output the security group table for each instance
-                sg_header = ['FromPort','ToPort','Protocol','IPv4','IPv6']
-                sg_data = []
-                ipv4Cidr = []
-                ipv6Cidr = []
-    
+                service_info = ['elb',socket.gethostbyname(load_balancer['DNSName']), load_balancer['DNSName'],"*" ]
+
+            # Create a list of security groups for the standard function to process
+                sg_list = list()
                 for sg in load_balancer['SecurityGroups']:
-                    security_group = ec2.SecurityGroup(sg)
-                    print('ELB Security GrpID  : {}'.format(security_group.group_id))
-                    print('ELB Security GrpName: {}'.format(security_group.group_name))
-                    print('ELB Security GrpDesc: {}'.format(security_group.description))
-                    for permission in security_group.ip_permissions:
-                        data = []
-                        data = [ permission.get('FromPort',''), permission.get('ToPort',''),permission.get('IpProtocol','')]
-                        for ip_range in permission.get('IpRanges',''):
-                            ipv4Cidr = []
-                            ipv4Cidr.append( ip_range.get('CidrIp','') )
-                        data.append(ipv4Cidr)
+                    sg_list.append(sg)
+                    
+                ## Call Process SG here:
+                status_message = process_sg(sg_list,service_info,ec2)
+                logger.debug('SG Processing return {}'.format(status_message))
     
-                        for ip_range in permission.get('Ipv6Ranges',''):
-                            ipv6Cidr = []
-                            ipv6Cidr.append(ip_range.get('CidrIpv6',''))
-                        data.append(ipv6Cidr)   
-                        sg_data.append(data)   
-                    table = columnar(sg_data, sg_header, no_borders=True)
-                    print(table)
-                    print("======================================================")
+    if count_elbv2 == 0:
+        print('No ELBv2 LoadBalancers Found')
+    else:    
+        print('Number of ELBv2 LoadBalancers Found {}'.format(count_elbv2))
     
+    print(HR_LINE)                 
+        
+        
+    print(HR_LINE)                
+    print('Checking RDS Instances')
+    count_rds = 0
+    for AWS_REGION in AWS_REGIONS_IN_USE:
+        session = boto3.Session(
+                    **AWS_CREDENTIALS,
+                    region_name=AWS_REGION
+                )
+        rds = session.client('rds')
+        ec2 = session.resource('ec2')
+        db_instances = rds.describe_db_instances()
+    
+        count_rds = 0
+        
+        service_info = list()
+        if db_instances:
+    
+            for db_instance in db_instances['DBInstances']:
+                
+                count_rds += 1
+                print(HR_LINE)
+                logger.debug(db_instance)
+                print('RDS Instance Name   : {}'.format(db_instance['DBName']))
+                print('RDS Instance DNS    : {}'.format(db_instance['Endpoint']['Address']))
+                print('RDS Instance DNS    : {}'.format(socket.gethostbyname(db_instance['Endpoint']['Address'])))
+                print('RDS Instance PORT   : {}'.format(db_instance['Endpoint']['Port']))
+                print('RDS Instance Engine : {}'.format(db_instance['Engine']))
+                print('RDS Instance Class  : {}'.format(db_instance['DBInstanceClass']))
+                service_info = ['rds',socket.gethostbyname(db_instance['Endpoint']['Address']), db_instance['Endpoint']['Address'],db_instance['Endpoint']['Port'] ]
+                print(HR_LINE)
+                
+                sg_list = list()
+                
+                for sg in db_instance['VpcSecurityGroups']:
+                    sg_list.append(sg['VpcSecurityGroupId'])
+                    print(sg_list)
+                
+                    status_message = process_sg(sg_list,service_info,ec2)
+                    logger.debug('SG Processing return {}'.format(status_message))
+   
+    print(HR_LINE)                
+    
+    print('Checking All Supported Regions for API Resources')
+    
+    # Setup Variables for this section
+    count_api = 0
+    
+    
+    for AWS_REGION in AWS_REGIONS_IN_USE:
+        session = boto3.Session(
+                    **AWS_CREDENTIALS,
+                    region_name=AWS_REGION
+                )
+    
+        ec2 = session.resource('ec2')
+        apigateway = boto3.client('apigateway')
+        
+        try:
+            response = apigateway.get_resources()
+            count_api += 1
+        
+        except:
+            response='No restapis found'
+            
+        print('  -Region {0} Response {1}'.format(AWS_REGION,response))
+        
+    if count_api == 0:
+        print('No API gateways found')
+        print('Due to lack of test environment no further code written')
+    print(HR_LINE)  
+    
+    print('Checking All Supported Regions for CloudFront Resources')
+
+    # Setup Variables for this section
+    count_cf = 0
+
+
+    for AWS_REGION in AWS_REGIONS_IN_USE:
+        session = boto3.Session(
+                    **AWS_CREDENTIALS,
+                    region_name=AWS_REGION
+                )
+    
+        ec2 = session.resource('ec2')
+        cloudfront = boto3.client('cloudfront')
+    
+        try:
+            response = cloudfront.get_distribution()
+            count_cf += 1
+    
+        except:
+            response='No CloudFront found'
+    
+        print('  -Region {0} Response{1}'.format(AWS_REGION,response))
+    
+    if count_cf == 0:
+        print('No CloudFront gateways found')
+        print('Due to lack of test environment no further code written')
+    print(HR_LINE)  
+                    
+    print('Checking All Supported Regions for CodeBuild Resources')
+
+    # Setup Variables for this section
+    count_cb = 0
+
+
+    for AWS_REGION in AWS_REGIONS_IN_USE:
+        session = boto3.Session(
+                    **AWS_CREDENTIALS,
+                    region_name=AWS_REGION
+                )
+
+        ec2 = session.resource('ec2')
+        codebuild = boto3.client('codebuild')
+
+        try:
+            response = codebuild.list_builds()
+            count_cb += 1
+
+        except:
+            response='No CodeBuild found'
+
+        print('  -Region {0} Response {1}'.format(AWS_REGION,response))
+
+    if count_api == 0:
+        print('No CodeBuild Resources found')
+        print('Due to lack of test environment no further code written')
+    print(HR_LINE)  
+
+    print('Checking All Supported Regions for DynamoDB  Resources')
+
+    # Setup Variables for this section
+    count_ddb = 0
+
+
+    for AWS_REGION in AWS_REGIONS_IN_USE:
+        session = boto3.Session(
+                    **AWS_CREDENTIALS,
+                    region_name=AWS_REGION
+                )
+
+        ec2 = session.resource('ec2')
+        client = boto3.client('dynamodb')
+
+        try:
+            response = client.list_tables()
+            count_ddb += 1
+
+        except:
+            response='No DynamoDB  found'
+
+        print('  -Region {0} Response {1}'.format(AWS_REGION,response))
+
+    if count_ddb == 0:
+        print('No DynamoDB  Resources found')
+        print('Due to lack of test environment no further code written')
+    print(HR_LINE)                          
+     
+     
+     
+     
+    print('Checking All Supported Regions for S3 Buckets  Resources')
+
+    # Setup Variables for this section
+    count_s3 = 0
+
+
+    for AWS_REGION in AWS_REGIONS_IN_USE:
+        session = boto3.Session(
+                    **AWS_CREDENTIALS,
+                    region_name=AWS_REGION
+                )
+
+        ec2 = session.resource('ec2')
+        client = boto3.client('s3')
+
+        try:
+            response = client.list_buckets()
+            print(response)
+            count_s3 += 1
+
+        except:
+            response='No S3 Buckets found'
+
+        print('  -Region {0} Response {1}'.format(AWS_REGION,response))
+
+    if count_s3 == 0:
+        print('No S3 Buckets found')
+        print('Due to lack of test environment no further code written')
+    print(HR_LINE)  
+
+    print('Checking All Supported Regions for ElasticSearch Resources')
+
+    # Setup Variables for this section
+    count_es = 0
+
+
+    for AWS_REGION in AWS_REGIONS_IN_USE:
+        session = boto3.Session(
+                    **AWS_CREDENTIALS,
+                    region_name=AWS_REGION
+                )
+
+        ec2 = session.resource('ec2')
+        client = boto3.client('es')
+
+        try:
+            response = client.list_domain_names()
+            print(response)
+            count_es += 1
+
+        except:
+            response='No ElasticSearch Resources found'
+
+        print('  -Region {0} Response {1}'.format(AWS_REGION,response))
+
+    if count_es == 0:
+        print('No ElasticSearch Resources')
+        print('Due to lack of test environment no further code written')
+    print(HR_LINE)                      
+                
+
+    print('Checking All Supported Regions for Redshift Resources')
+
+    # Setup Variables for this section
+    count_rs = 0
+
+
+    for AWS_REGION in AWS_REGIONS_IN_USE:
+        session = boto3.Session(
+                    **AWS_CREDENTIALS,
+                    region_name=AWS_REGION
+                )
+
+        ec2 = session.resource('ec2')
+        client = boto3.client('redshift')
+
+        try:
+            response = client.describe_clusters()
+            print(response)
+            count_rs += 1
+
+        except:
+            response='No Redshift Resources found'
+
+        print('  -Region {0} Response {1}'.format(AWS_REGION,response))
+
+    if count_rs == 0:
+        print('No Redshift Resources')
+        print('Due to lack of test environment no further code written')
+    print(HR_LINE)  
+
+
+               
+    print(HR_LINE)
+    print('IP Summary of Report')
+    header = ['Service','IP Address','DNS Name','Service Port','Security Group','Ports Open','IPv4 CIDR','IPv6 CIDR','Security Check']
+    data = list()
+    for IP in IP_DATA:
+        data.append(IP)
+        logger.debug(len(IP),IP)
+    table = columnar(data, header, no_borders=False)
+    print(table)
+   
+
+
+    print(HR_LINE)
+    print("Service Counts")
+    print("EC2 counts {ec2}".format(ec2=count_ec2))
+    print("ELB counts {elb}".format(elb=count_elb))
+    print("ELBv2 counts {elbv2}".format(elbv2=count_elbv2))
+    print("RDS counts {rds}".format(rds=count_rds))
+    print("CloudFront counts {cf}".format(cf=count_cf))
+    print("CodeBuild counts {cb}".format(cb=count_cb))
+    print("DynamoDB counts {ddb}".format(ddb=count_ddb))
+    print("S3 counts {s3}".format(s3=count_s3))
+    print("ElasticSearch counts {es}".format(es=count_es))
+    print(HR_LINE)
+
     print('End of Program')
     return 0
 

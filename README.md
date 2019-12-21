@@ -30,9 +30,13 @@ A script to provide an analysis of public ip space with open ports/protocols
 - DYNAMODB
  -EC2
 <span style="color:red">- EC2_INSTANCE_CONNECT - Not checking</span>
+
 <span style="color:red">- GLOBALACCELERATOR - Not checking</span>
+
 <span style="color:red">- ROUTE53 -- Won't Check</span>
+
 <span style="color:red">- ROUTE53_HEALTHCHECKS -- Not Checked</span>
+
 - S3 
 <span style="color:red">-WORKSPACES_GATEWAYS -- Not Checked</span>
 - ELB (Classic ELB)
@@ -119,7 +123,13 @@ optional arguments:
 <span style="color:blue">
 The edge cases and work left to do is related to testing and verifying all places where a public IP address might be used. I looked at a few methods to determine this with Security Groups and some other methods. 
 
-The program provides two sets of data. One by the service and a summary and analysis at the end.
+The program provides two sets of data. One by the service and a summary and analysis at the end. Ideally, I would add comments and tags from the VPCs. 
+
+There is a need for using some Cloud Vendors to provide an automated IP address report 
+and tags. Given the time constraints and lack of development environment, these options 
+are not included
+
+
 
 ### Examples
 
@@ -186,7 +196,8 @@ Ingress Rules
 |sg-068df045|22:22:tcp  |172.32.4.50|PUBLIC   |[]       |-        |Open to pub|
 |157b84a91  |           |/32        |         |         |         |lic space :|
 |           |           |           |         |         |         | -:-       |
-|-----------|-----------|-----------|---------|---------|---------|-----------||-----------|-----------|-----------|---------|---------|---------|-----------|
+|-----------|-----------|-----------|---------|---------|---------|-----------|
+|-----------|-----------|-----------|---------|---------|---------|-----------|
 ```
 
 ### Example 2
